@@ -46,9 +46,7 @@ func newLimiter(limit int64) *limiter {
 
 		for range c {
 			atomic.StoreInt64(&l.currentLimit, l.limit)
-
-			fmt.Println("update rate")
-
+			
 			l.wg.done()
 		}
 	}()

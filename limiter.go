@@ -62,10 +62,7 @@ func (l *limiter) decrease(n int64) bool {
 		return false
 	}
 
-	fmt.Printf("before decrease %d\n", l.currentLimit)
 	l.currentLimit -= n
-	fmt.Printf("after decrease %d\n", l.currentLimit)
-
 	return true
 }
 

@@ -1,28 +1,26 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-type wg struct {
-	n int64
-	c chan struct{}
+type wg chan int64
+
+func (w wg) wait(n int64) {
+	w <- n
 }
 
-func (w *wg) wait() {
-	atomic.AddInt64(&w.n, 1)
-	<-w.c
-}
+func (w wg) done(limit int64) {
+	var current int64
 
-func (w *wg) done() {
-	wait := atomic.LoadInt64(&w.n)
-	fmt.Println(wait)
-	for i := 0; int64(i) < wait; i++ {
-		w.c <- struct{}{}
-		atomic.AddInt64(&w.n, -1)
+	for c := range w {
+		current += c
+		if current > limit {
+			return
+		}
 	}
 }
 
@@ -31,51 +29,52 @@ type limiter struct {
 	currentLimit int64
 
 	mu sync.Mutex
-	wg *wg
+	wg wg
 }
 
-func newLimiter(limit int64) *limiter {
+func NewLimiter(ctx context.Context, limit int64) *limiter {
 	l := &limiter{
 		limit:        limit,
 		currentLimit: limit,
-		wg:           &wg{c: make(chan struct{})},
+		wg:           make(chan int64),
 	}
 
 	go func() {
-		c := time.Tick(time.Second)
+		t := time.NewTicker(time.Second)
 
-		for range c {
-			atomic.StoreInt64(&l.currentLimit, l.limit)
-
-			fmt.Println("update rate")
-
-			l.wg.done()
+		for {
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+				atomic.StoreInt64(&l.currentLimit, l.limit)
+				l.wg.done(l.limit)
+			}
 		}
 	}()
 
 	return l
 }
 
-func (l *limiter) decrease(n int64) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (w *limiter) decrease(n int64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-	if l.currentLimit < n {
+	if w.currentLimit < n {
 		return false
 	}
 
-	fmt.Printf("before decrease %d\n", l.currentLimit)
-	l.currentLimit -= n
-	fmt.Printf("after decrease %d\n", l.currentLimit)
-
+	w.currentLimit -= n
 	return true
 }
 
-func (l *limiter) Take(n int64) {
-	if ok := l.decrease(n); ok {
+func (w *limiter) Do(n int64, f func() error) {
+	if ok := w.decrease(n); ok {
+		_ = f()
 		return
 	}
 
-	l.wg.wait()
-	l.Take(n)
+	w.wg.wait(n)
+	w.Do(n, f)
 }
